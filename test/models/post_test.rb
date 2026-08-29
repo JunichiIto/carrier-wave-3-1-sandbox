@@ -54,9 +54,39 @@ class PostTest < ActiveSupport::TestCase
     assert_head @requests
   end
 
+  test "image? は S3 への HEAD リクエストを発生させる" do
+    @post.image?
+    assert_head @requests
+  end
+
+  test "image.size は S3 への HEAD リクエストを発生させる" do
+    @post.image.size
+    assert_head @requests
+  end
+
+  test "validates :image, presence: true のバリデーションは S3 への HEAD リクエストを発生させる" do
+    post = PostWithImageValidation.find(@post.id)
+    @requests.clear # find 時点では S3 アクセスは発生しない想定だが、計測を確実に初期化しておく
+
+    post.valid?
+
+    # valid? 1 回で HEAD が 5 回も発生する。ActiveModel の EachValidator は
+    # allow_nil / allow_blank のスキップ判定で毎回 value.blank? を呼ぶため、
+    # presence に加えて CarrierWave が mount 時に自動追加する
+    # integrity / processing / download の各バリデータでも blank? が評価され(計 4 回)、
+    # さらに PresenceValidator 本体の判定で 1 回、合計 5 回となる
+    assert_head @requests, count: 5
+  end
+
+  # presence バリデーション検証用のモデル(Post 本体は最小構成のまま保つ)
+  class PostWithImageValidation < Post
+    validates :image, presence: true
+  end
+
   private
 
-  def assert_head(requests)
-    assert requests.any? { |r| r.start_with?("HEAD ") }, "expected HEAD request, got: #{requests.inspect}"
+  def assert_head(requests, count: 1)
+    head_count = requests.count { |r| r.start_with?("HEAD ") }
+    assert_equal count, head_count, "expected #{count} HEAD request(s), got: #{requests.inspect}"
   end
 end

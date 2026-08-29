@@ -46,9 +46,14 @@ bin/rails test test/models/post_test.rb
 | `post[:image].present?`(生カラム) | なし |
 | `post.image_url` | なし |
 | `post.image.url` | なし |
-| `post.image.present?` | **HEAD リクエスト発生** |
-| `post.image.blank?` | **HEAD リクエスト発生** |
-| `post.image.file.exists?` | **HEAD リクエスト発生** |
+| `post.image.present?` | **HEAD リクエスト 1 回** |
+| `post.image.blank?` | **HEAD リクエスト 1 回** |
+| `post.image.file.exists?` | **HEAD リクエスト 1 回** |
+| `post.image?` | **HEAD リクエスト 1 回** |
+| `post.image.size` | **HEAD リクエスト 1 回** |
+| `validates :image, presence: true`(`valid?` / `save` 時) | **HEAD リクエスト 5 回** |
+
+presence バリデーションで 5 回になるのは、ActiveModel の `EachValidator` が `allow_nil` / `allow_blank` のスキップ判定で毎回 `value.blank?` を呼ぶため、presence に加えて CarrierWave が mount 時に自動追加する integrity / processing / download の各バリデータでも `blank?` が評価され(計 4 回)、さらに `PresenceValidator` 本体の判定で 1 回発生するためです。
 
 ※ テストは MinIO の起動が前提です。未起動の場合は `Excon::Error::Socket`(connection refused)で失敗します。
 
