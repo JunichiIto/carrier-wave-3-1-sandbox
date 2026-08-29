@@ -33,7 +33,8 @@ gem "thruster", require: false
 gem "image_processing", "~> 1.2"
 
 # CarrierWave によるファイルアップロード(fog 経由で S3 互換ストレージ MinIO に保存)
-gem "carrierwave", "~> 3.1"
+# issue #2776 が発生しない 3.0 系の挙動を検証するため 3.0.7 に固定
+gem "carrierwave", "3.0.7"
 gem "fog-aws", "~> 3.30"
 
 # Use Rack CORS for handling Cross-Origin Resource Sharing (CORS), making cross-origin Ajax possible

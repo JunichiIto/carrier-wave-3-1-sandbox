@@ -39,66 +39,62 @@ class PostTest < ActiveSupport::TestCase
     assert_empty @requests
   end
 
-  test "image.present? は S3 への HEAD リクエストを発生させる (issue #2776)" do
-    @post.image.present?
-    assert_head @requests
+  test "image.present? は S3 アクセスを発生させない(3.0 系)" do
+    # 3.0 系の Storage::Fog::File には empty? がないため、blank? は
+    # ストレージに問い合わせず false を返す(3.1 系で HEAD が発生するようになった)
+    assert @post.image.present?
+    assert_empty @requests
   end
 
-  test "image.blank? は S3 への HEAD リクエストを発生させる" do
-    @post.image.blank?
-    assert_head @requests
+  test "image.blank? は S3 アクセスを発生させない" do
+    assert_not @post.image.blank?
+    assert_empty @requests
   end
 
-  test "image.file.exists? は S3 への HEAD リクエストを発生させる" do
+  test "image.file.exists? は S3 への HEAD リクエストを発生させる(3.1 系と同じ)" do
     @post.image.file.exists?
     assert_head @requests
   end
 
-  test "image? は S3 への HEAD リクエストを発生させる" do
-    @post.image?
-    assert_head @requests
+  test "image? は S3 アクセスを発生させない" do
+    assert @post.image?
+    assert_empty @requests
   end
 
-  test "image.size は S3 への HEAD リクエストを発生させる" do
+  test "image.size は S3 への HEAD リクエストを発生させる(3.1 系と同じ)" do
     @post.image.size
     assert_head @requests
   end
 
-  test "バリデーションを定義していなくても valid? は S3 への HEAD リクエストを発生させる" do
+  test "バリデーションを定義していないモデルの valid? は S3 アクセスを発生させない" do
+    # CarrierWave 自動追加の integrity / processing / download バリデータの
+    # スキップ判定(EachValidator#validate の value.blank?)は 3.0 系でも通るが、
+    # blank? がストレージに問い合わせないため HEAD は発生しない
     @post.valid?
-
-    # CarrierWave が mount 時に自動追加する integrity / processing / download バリデータの
-    # スキップ判定(EachValidator#validate の value.blank?)により HEAD が発生する
-    assert_head @requests
+    assert_empty @requests
   end
 
-  test "validates :image, presence: true のバリデーションは S3 への HEAD リクエストを発生させる" do
+  test "validates :image, presence: true のバリデーションは S3 アクセスを発生させない" do
     post = PostWithImageValidation.create!(title: "sample", image: File.open(file_fixture("sample.png")))
     post = PostWithImageValidation.find(post.id)
     @requests.clear
 
-    post.valid?
-
-    # valid? 中に blank? は 5 回評価される(EachValidator の allow_nil / allow_blank
-    # スキップ判定が presence + CarrierWave 自動追加の integrity / processing / download
-    # の各バリデータで計 4 回、PresenceValidator 本体の判定で 1 回)。
-    # ただし fog は最初の HEAD で取得したファイル情報を @file にメモ化するため、
-    # ファイルが S3 上に実在する場合の HTTP リクエストは初回の 1 回だけになる
-    assert_head @requests
+    assert post.valid?
+    assert_empty @requests
   ensure
     post&.image&.remove!
   end
 
-  test "ファイルが実在しない場合、presence バリデーションは blank? の評価回数ぶん HEAD リクエストを発生させる" do
+  test "ファイルが実在しなくても presence バリデーションは valid になる" do
     post = PostWithImageValidation.create!(title: "sample", image: File.open(file_fixture("sample.png")))
     post.image.file.delete # DB の識別子は残したまま、S3 上のオブジェクトだけを削除する
     post = PostWithImageValidation.find(post.id)
     @requests.clear
 
-    post.valid?
-
-    # 404 の場合 fog はファイル情報をメモ化しないため、blank? の評価 5 回がそのまま HEAD 5 回になる
-    assert_head @requests, count: 5
+    # 3.0 系の blank? は識別子ベースの判定なので、S3 上のオブジェクトが消えていても
+    # valid になり、S3 アクセスも発生しない(3.1 系では invalid + HEAD 5 回)
+    assert post.valid?
+    assert_empty @requests
   end
 
   # presence バリデーション検証用のモデル(Post 本体は最小構成のまま保つ)
