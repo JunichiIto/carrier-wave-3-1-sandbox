@@ -64,17 +64,40 @@ class PostTest < ActiveSupport::TestCase
     assert_head @requests
   end
 
+  test "バリデーションを定義していなくても valid? は S3 への HEAD リクエストを発生させる" do
+    @post.valid?
+
+    # CarrierWave が mount 時に自動追加する integrity / processing / download バリデータの
+    # スキップ判定(EachValidator#validate の value.blank?)により HEAD が発生する
+    assert_head @requests
+  end
+
   test "validates :image, presence: true のバリデーションは S3 への HEAD リクエストを発生させる" do
-    post = PostWithImageValidation.find(@post.id)
-    @requests.clear # find 時点では S3 アクセスは発生しない想定だが、計測を確実に初期化しておく
+    post = PostWithImageValidation.create!(title: "sample", image: File.open(file_fixture("sample.png")))
+    post = PostWithImageValidation.find(post.id)
+    @requests.clear
 
     post.valid?
 
-    # valid? 1 回で HEAD が 5 回も発生する。ActiveModel の EachValidator は
-    # allow_nil / allow_blank のスキップ判定で毎回 value.blank? を呼ぶため、
-    # presence に加えて CarrierWave が mount 時に自動追加する
-    # integrity / processing / download の各バリデータでも blank? が評価され(計 4 回)、
-    # さらに PresenceValidator 本体の判定で 1 回、合計 5 回となる
+    # valid? 中に blank? は 5 回評価される(EachValidator の allow_nil / allow_blank
+    # スキップ判定が presence + CarrierWave 自動追加の integrity / processing / download
+    # の各バリデータで計 4 回、PresenceValidator 本体の判定で 1 回)。
+    # ただし fog は最初の HEAD で取得したファイル情報を @file にメモ化するため、
+    # ファイルが S3 上に実在する場合の HTTP リクエストは初回の 1 回だけになる
+    assert_head @requests
+  ensure
+    post&.image&.remove!
+  end
+
+  test "ファイルが実在しない場合、presence バリデーションは blank? の評価回数ぶん HEAD リクエストを発生させる" do
+    post = PostWithImageValidation.create!(title: "sample", image: File.open(file_fixture("sample.png")))
+    post.image.file.delete # DB の識別子は残したまま、S3 上のオブジェクトだけを削除する
+    post = PostWithImageValidation.find(post.id)
+    @requests.clear
+
+    post.valid?
+
+    # 404 の場合 fog はファイル情報をメモ化しないため、blank? の評価 5 回がそのまま HEAD 5 回になる
     assert_head @requests, count: 5
   end
 

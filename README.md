@@ -51,9 +51,14 @@ bin/rails test test/models/post_test.rb
 | `post.image.file.exists?` | **HEAD リクエスト 1 回** |
 | `post.image?` | **HEAD リクエスト 1 回** |
 | `post.image.size` | **HEAD リクエスト 1 回** |
-| `validates :image, presence: true`(`valid?` / `save` 時) | **HEAD リクエスト 5 回** |
+| `post.valid?`(バリデーション定義なし) | **HEAD リクエスト 1 回** |
+| `validates :image, presence: true`(`valid?` / `save` 時) | **HEAD リクエスト 1 回**(ファイルが S3 上に実在しない場合は **5 回**) |
 
-presence バリデーションで 5 回になるのは、ActiveModel の `EachValidator` が `allow_nil` / `allow_blank` のスキップ判定で毎回 `value.blank?` を呼ぶため、presence に加えて CarrierWave が mount 時に自動追加する integrity / processing / download の各バリデータでも `blank?` が評価され(計 4 回)、さらに `PresenceValidator` 本体の判定で 1 回発生するためです。
+presence バリデーション付きの `valid?` では `blank?` が 5 回評価されます。ActiveModel の `EachValidator` は `allow_nil` / `allow_blank` のスキップ判定で(オプション未指定でも)毎回 `value.blank?` を呼ぶため、presence に加えて CarrierWave が mount 時に自動追加する integrity / processing / download の各バリデータでも `blank?` が評価され(計 4 回)、さらに `PresenceValidator` 本体の判定で 1 回評価されるためです。
+
+ただし fog は最初の HEAD で取得したファイル情報をメモ化するため、ファイルが S3 上に実在する場合の HTTP リクエストは初回の 1 回だけです。ファイルが実在しない(404)場合はメモ化されず、評価回数ぶんの 5 回の HEAD が発生します。
+
+また、この自動バリデータの `blank?` 評価はバリデーションを何も定義していないモデルでも発生するため、`mount_uploader` しただけのモデルでも `valid?` / `save` のたびに HEAD リクエストが最低 1 回発生します。
 
 ※ テストは MinIO の起動が前提です。未起動の場合は `Excon::Error::Socket`(connection refused)で失敗します。
 
