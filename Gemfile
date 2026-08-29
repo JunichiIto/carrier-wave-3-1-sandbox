@@ -32,6 +32,10 @@ gem "thruster", require: false
 # Use Active Storage variants [https://guides.rubyonrails.org/active_storage_overview.html#transforming-images]
 gem "image_processing", "~> 1.2"
 
+# CarrierWave によるファイルアップロード(fog 経由で S3 互換ストレージ MinIO に保存)
+gem "carrierwave", "~> 3.1"
+gem "fog-aws", "~> 3.30"
+
 # Use Rack CORS for handling Cross-Origin Resource Sharing (CORS), making cross-origin Ajax possible
 # gem "rack-cors"
 
