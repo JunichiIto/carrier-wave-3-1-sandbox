@@ -27,6 +27,14 @@ MinIO Web コンソール: http://localhost:9001 (ID/PW: `minioadmin` / `minioad
 
 モデルテストが検証の本体です。Excon(fog-aws が使う HTTP クライアント)のインストルメンテーションで `excon.request` イベントを購読し、各メソッド呼び出しが MinIO への HTTP リクエストを発生させるかをアサートしています。
 
+MinIO の起動(ヘルシー待ち + バケット作成)とテスト実行は rake タスクにまとめてあります:
+
+```sh
+bin/rails verify
+```
+
+MinIO が起動済みであれば、テストだけを直接実行しても構いません:
+
 ```sh
 bin/rails test test/models/post_test.rb
 ```
