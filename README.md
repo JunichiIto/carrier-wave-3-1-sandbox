@@ -2,6 +2,8 @@
 
 CarrierWave 3.1 で `present?` / `exists?` などを呼び出したときに S3 へのアクセス(HEAD リクエスト)が発生するかを、実際の S3 の代わりに [MinIO](https://min.io/) を使ってローカルで検証するサンドボックスです。
 
+**このブランチ(verify-carrierwave-master-fix)では、issue #2776 の修正コミット [f635d88](https://github.com/carrierwaveuploader/carrierwave/commit/f635d88b9debeda27b25148856ca5e0faa186d17)(master、4.0.0.alpha)を取り込み、修正後の挙動を検証しています。**
+
 関連 issue: [carrierwaveuploader/carrierwave#2776](https://github.com/carrierwaveuploader/carrierwave/issues/2776)
 (CarrierWave 3.0.7 → 3.1.x で `CarrierWave::Storage::Fog::File#empty?` が S3 への HEAD リクエストを発行するようになり、`present?` を呼ぶたびに S3 アクセスが走るという報告)
 
@@ -39,26 +41,29 @@ MinIO が起動済みであれば、テストだけを直接実行しても構�
 bin/rails test test/models/post_test.rb
 ```
 
-### 期待される結果(CarrierWave 3.1.x)
+### 期待される結果(master / #2776 修正後)— 3.1.x との比較
 
-| メソッド | S3 アクセス |
-| --- | --- |
-| `post[:image].present?`(生カラム) | なし |
-| `post.image_url` | なし |
-| `post.image.url` | なし |
-| `post.image.present?` | **HEAD リクエスト 1 回** |
-| `post.image.blank?` | **HEAD リクエスト 1 回** |
-| `post.image.file.exists?` | **HEAD リクエスト 1 回** |
-| `post.image?` | **HEAD リクエスト 1 回** |
-| `post.image.size` | **HEAD リクエスト 1 回** |
-| `post.valid?`(バリデーション定義なし) | **HEAD リクエスト 1 回** |
-| `validates :image, presence: true`(`valid?` / `save` 時) | **HEAD リクエスト 1 回**(ファイルが S3 上に実在しない場合は **5 回**) |
+| メソッド | 3.1.x(main ブランチ) | master(このブランチ) |
+| --- | --- | --- |
+| `post[:image].present?`(生カラム) | なし | なし |
+| `post.image_url` / `post.image.url` | なし | なし |
+| `post.image.present?` | HEAD 1 回 | **なし** |
+| `post.image.blank?` | HEAD 1 回 | **なし** |
+| `post.image?` | HEAD 1 回 | **なし** |
+| `post.image.exists?`(**新設**) | —(メソッドなし) | **HEAD 1 回** |
+| `post.image.file.exists?` | HEAD 1 回 | HEAD 1 回 |
+| `post.image.size` | HEAD 1 回 | HEAD 1 回 |
+| `post.valid?`(バリデーション定義なし) | HEAD 1 回 | **なし** |
+| `validates :image, presence: true`(`valid?` 時) | HEAD 1 回(ファイル不在時は 5 回) | **なし** |
 
-presence バリデーション付きの `valid?` では `blank?` が 5 回評価されます。ActiveModel の `EachValidator` は `allow_nil` / `allow_blank` のスキップ判定で(オプション未指定でも)毎回 `value.blank?` を呼ぶため、presence に加えて CarrierWave が mount 時に自動追加する integrity / processing / download の各バリデータでも `blank?` が評価され(計 4 回)、さらに `PresenceValidator` 本体の判定で 1 回評価されるためです。
+修正の要点:
 
-ただし fog は最初の HEAD で取得したファイル情報をメモ化するため、ファイルが S3 上に実在する場合の HTTP リクエストは初回の 1 回だけです。ファイルが実在しない(404)場合はメモ化されず、評価回数ぶんの 5 回の HEAD が発生します。
+- **`blank?` / `present?` はストレージに問い合わせなくなり**、「ファイルが割り当てられているか」だけを返す(BREAKING CHANGE)。これにより `present?` / `image?` / presence バリデーション / 自動追加バリデータ経由の HEAD がすべて消える
+- ストレージ上の実在確認は**新設の `Uploader#exists?`** に分離された(呼べばリモートでは HEAD 1 回)
+- fog の `File#file` のメモ化が `defined?(@file)` 方式になり、**404(不在)もメモ化される**ようになった。3.1.x にあった「不在ファイルはアクセスのたびに HEAD 再発行」(#2698 / #2793)が解消され、`exists?` を 2 回呼んでも HEAD は 1 回で済む
+- `size` はストレージが content_length を返さない場合に `NoMethodError` にならず 0 を返す(#2787)
 
-また、この自動バリデータの `blank?` 評価はバリデーションを何も定義していないモデルでも発生するため、`mount_uploader` しただけのモデルでも `valid?` / `save` のたびに HEAD リクエストが最低 1 回発生します。
+**セマンティクスの変化に注意**: `validates :image, presence: true` は識別子カラムだけで判定するようになったため、DB に識別子が残っていて S3 上のオブジェクトが消えている場合でも **valid** になります(3.1.x ではストレージを見るため invalid でした)。
 
 ※ テストは MinIO の起動が前提です。未起動の場合は `Excon::Error::Socket`(connection refused)で失敗します。
 
