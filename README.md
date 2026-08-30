@@ -5,6 +5,12 @@ CarrierWave 3.1 で `present?` / `exists?` などを呼び出したときに S3 
 関連 issue: [carrierwaveuploader/carrierwave#2776](https://github.com/carrierwaveuploader/carrierwave/issues/2776)
 (CarrierWave 3.0.7 → 3.1.x で `CarrierWave::Storage::Fog::File#empty?` が S3 への HEAD リクエストを発行するようになり、`present?` を呼ぶたびに S3 アクセスが走るという報告)
 
+**このブランチ(verify-monkey-patch-2776)では、carrierwave 3.1.3 のまま、master の修正コミット [f635d88](https://github.com/carrierwaveuploader/carrierwave/commit/f635d88b9debeda27b25148856ca5e0faa186d17) をモンキーパッチとして移植し(`config/initializers/carrierwave_patch_2776.rb`)、master 取り込み時と同じ挙動(present? 系の S3 アクセスなし / `exists?` 新設 / 404 のメモ化)になることを検証しています。**
+
+- パッチは `Module#prepend` 方式(ロード順に対して頑健)で、carrierwave のバージョンが 3.1.3 以外になると raise するガード付きです
+- 修正込みのバージョン(4.0 予定)がリリースされたら、initializer を削除して `bundle update carrierwave` するだけで移行できます
+- 本家コミットの `read` の変更(`remove_instance_variable`)も移植していますが、fog-aws では `body` が String で返るためこの分岐には到達しないことを実測で確認済みです(body が `::File` を返しうる他の fog プロバイダ向けの防御的な移植)
+
 ## 必要環境
 
 - Ruby 4.0.6

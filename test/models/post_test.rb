@@ -39,66 +39,87 @@ class PostTest < ActiveSupport::TestCase
     assert_empty @requests
   end
 
-  test "image.present? は S3 への HEAD リクエストを発生させる (issue #2776)" do
-    @post.image.present?
+  test "image.present? は S3 アクセスを発生させなくなった (#2776 修正のモンキーパッチ)" do
+    # モンキーパッチ適用後は blank? / present? は「ファイルが割り当てられているか」
+    # だけを返すようになり、ストレージには問い合わせない
+    assert @post.image.present?
+    assert_empty @requests
+  end
+
+  test "image.blank? は S3 アクセスを発生させなくなった" do
+    assert_not @post.image.blank?
+    assert_empty @requests
+  end
+
+  test "image.exists? はストレージの実在確認として新設され、S3 への HEAD リクエストを発生させる" do
+    # 実在確認は present? から分離され、新設の Uploader#exists? が担う
+    assert @post.image.exists?
     assert_head @requests
   end
 
-  test "image.blank? は S3 への HEAD リクエストを発生させる" do
-    @post.image.blank?
+  test "ファイルが実在しない場合の image.exists? は false を返し、2 回呼んでも HEAD は 1 回で済む" do
+    @post.image.file.delete # DB の識別子は残したまま、S3 上のオブジェクトだけを削除する
+    post = Post.find(@post.id)
+    @requests.clear
+
+    2.times { assert_not post.image.exists? }
+
+    # 404(不在)も defined?(@file) 方式でメモ化されるようになったため(#2698 / #2793)、
+    # 3.1.x のようにアクセスのたびに HEAD が再発行されることはない
     assert_head @requests
   end
 
-  test "image.file.exists? は S3 への HEAD リクエストを発生させる" do
+  test "image.file.exists? は S3 への HEAD リクエストを発生させる(変化なし)" do
     @post.image.file.exists?
     assert_head @requests
   end
 
-  test "image? は S3 への HEAD リクエストを発生させる" do
-    @post.image?
-    assert_head @requests
+  test "image.read でファイル本文を取得できる(file のメモ化方式変更後も壊れていない)" do
+    # パッチは file のメモ化を defined? 方式に変えているため、
+    # read が正しく動作することの回帰ガードとして本文の取得を確認する
+    assert_equal File.binread(file_fixture("sample.png")), @post.image.read
   end
 
-  test "image.size は S3 への HEAD リクエストを発生させる" do
+  test "image? は S3 アクセスを発生させなくなった" do
+    assert @post.image?
+    assert_empty @requests
+  end
+
+  test "image.size は S3 への HEAD リクエストを発生させる(変化なし)" do
     @post.image.size
     assert_head @requests
   end
 
-  test "バリデーションを定義していなくても valid? は S3 への HEAD リクエストを発生させる" do
+  test "バリデーションを定義していないモデルの valid? は S3 アクセスを発生させなくなった" do
+    # 3.1.x では CarrierWave 自動追加の integrity / processing / download バリデータの
+    # スキップ判定(EachValidator#validate の value.blank?)で HEAD が発生していたが、
+    # blank? がストレージに問い合わせなくなったため消えた
     @post.valid?
-
-    # CarrierWave が mount 時に自動追加する integrity / processing / download バリデータの
-    # スキップ判定(EachValidator#validate の value.blank?)により HEAD が発生する
-    assert_head @requests
+    assert_empty @requests
   end
 
-  test "validates :image, presence: true のバリデーションは S3 への HEAD リクエストを発生させる" do
+  test "validates :image, presence: true のバリデーションは S3 アクセスを発生させなくなった" do
     post = PostWithImageValidation.create!(title: "sample", image: File.open(file_fixture("sample.png")))
     post = PostWithImageValidation.find(post.id)
     @requests.clear
 
-    post.valid?
-
-    # valid? 中に blank? は 5 回評価される(EachValidator の allow_nil / allow_blank
-    # スキップ判定が presence + CarrierWave 自動追加の integrity / processing / download
-    # の各バリデータで計 4 回、PresenceValidator 本体の判定で 1 回)。
-    # ただし fog は最初の HEAD で取得したファイル情報を @file にメモ化するため、
-    # ファイルが S3 上に実在する場合の HTTP リクエストは初回の 1 回だけになる
-    assert_head @requests
+    assert post.valid?
+    assert_empty @requests
   ensure
     post&.image&.remove!
   end
 
-  test "ファイルが実在しない場合、presence バリデーションは blank? の評価回数ぶん HEAD リクエストを発生させる" do
+  test "ファイルが実在しなくても presence バリデーションは valid になる(セマンティクスの変化)" do
     post = PostWithImageValidation.create!(title: "sample", image: File.open(file_fixture("sample.png")))
     post.image.file.delete # DB の識別子は残したまま、S3 上のオブジェクトだけを削除する
     post = PostWithImageValidation.find(post.id)
     @requests.clear
 
-    post.valid?
-
-    # 404 の場合 fog はファイル情報をメモ化しないため、blank? の評価 5 回がそのまま HEAD 5 回になる
-    assert_head @requests, count: 5
+    # パッチ未適用の 3.1.x では blank? がストレージを見るためファイル不在なら
+    # invalid(HEAD 5 回)だったが、パッチ適用後は識別子カラムがあれば valid となり、
+    # S3 アクセスも発生しない
+    assert post.valid?
+    assert_empty @requests
   end
 
   test "画像が添付されていない場合は present? や valid? を呼んでも S3 アクセスは発生しない" do
