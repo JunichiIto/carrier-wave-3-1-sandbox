@@ -1,20 +1,20 @@
 # CarrierWave 3.1 系で present? / blank? / valid? などが S3 への HEAD リクエストを
-# 発生させる問題(issue #2776)に対する master の修正コミットを 3.1.3 に移植する
-# モンキーパッチ。
+# 発生させる問題(issue #2776)に対する master の修正コミットを 3.1 系に移植する
+# モンキーパッチ(3.1.3 で動作確認済み)。
 # https://github.com/carrierwaveuploader/carrierwave/commit/f635d88b9debeda27b25148856ca5e0faa186d17
 #
 # 修正込みのバージョン(4.0 予定)がリリースされたら、このファイルごと削除して
 # bundle update carrierwave すること。
 
-unless CarrierWave::VERSION == "3.1.3"
-  raise "carrierwave が 3.1.3 以外(#{CarrierWave::VERSION})になっています。" \
+unless CarrierWave::VERSION.start_with?("3.1.")
+  raise "carrierwave が 3.1 系以外(#{CarrierWave::VERSION})になっています。" \
         "このモンキーパッチがまだ必要か確認し、不要なら " \
         "config/initializers/carrierwave_patch_2776.rb を削除してください。"
 end
 
 module CarrierWavePatch2776
   module UploaderProxyPatch
-    # blank? / present? は「ファイルが割り当てられているか」だけを返し、
+    # blank? / present? は「ファイルが添付されているか」だけを返し、
     # ストレージには問い合わせない
     def blank?
       return true unless file
