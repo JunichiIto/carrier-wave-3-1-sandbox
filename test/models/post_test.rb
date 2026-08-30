@@ -97,6 +97,30 @@ class PostTest < ActiveSupport::TestCase
     assert_empty @requests
   end
 
+  test "画像が添付されていない場合は present? や valid? を呼んでも S3 アクセスは発生しない" do
+    post = Post.create!(title: "no image")
+    post = Post.find(post.id)
+    @requests.clear
+
+    # 識別子カラムが空だと、blank? はストレージの File オブジェクトを
+    # 組み立てる前に true を返すため、S3 には一切問い合わせない
+    assert_not post.image.present?
+    assert post.image.blank?
+    assert_nil post.image.presence
+    assert_not post.image?
+    assert post.valid?
+    assert post.save
+    assert_empty @requests
+  end
+
+  test "画像が添付されていない場合、presence バリデーションも S3 アクセスなしで invalid になる" do
+    post = PostWithImageValidation.new(title: "no image")
+
+    assert_not post.valid?
+    assert post.errors.of_kind?(:image, :blank)
+    assert_empty @requests
+  end
+
   # presence バリデーション検証用のモデル(Post 本体は最小構成のまま保つ)
   class PostWithImageValidation < Post
     validates :image, presence: true
