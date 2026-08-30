@@ -71,6 +71,13 @@ jobs:
         with:
           bundler-cache: true
 
+      # テストは MinIO(S3 互換ストレージ)への実接続を前提としているため、
+      # ローカルと同じ docker-compose.yml で起動する(rake タスク minio:up と同じ手順)
+      - name: Start MinIO
+        run: |
+          docker compose up -d --wait minio
+          docker compose run --rm createbuckets
+
       - name: Run tests
         env:
           RAILS_ENV: test
