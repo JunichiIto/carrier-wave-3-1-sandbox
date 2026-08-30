@@ -53,13 +53,18 @@ class AttachmentTest < ActiveSupport::TestCase
   end
 
   test "S3 上の preview だけが消えている場合でも preview.present? は true を返してしまう" do
+    # 「条件は true なのに version の実体がない」状態は、version を後から
+    # アップローダーに追加した(recreate_versions! 未実行)、version の条件や
+    # 名前を後から変更した、store! や recreate_versions! が部分失敗した、
+    # などの通常の運用で自然に発生する。ここでは S3 上のオブジェクトを
+    # 直接削除してその状態を再現する
     attachment = Attachment.create!(file: File.open(file_fixture("sample.png")))
     attachment.file.preview.file.delete # DB はそのまま、S3 上の preview オブジェクトだけを削除する
     attachment = Attachment.find(attachment.id)
     @requests.clear
 
     # 3.0 系の blank? はストレージに問い合わせないため、「条件は true なのに
-    # 実体がない」version を検出できず true を返す(= issue #1926 の症状。
+    # 実体がない」version を検出できず true を返す(issue #1926 と同種の症状。
     # url も存在しないファイルを指すため、画像リンク切れの原因になる)
     assert attachment.file.preview.present?
     assert_head @requests # 条件評価の HEAD 1 回のみ
