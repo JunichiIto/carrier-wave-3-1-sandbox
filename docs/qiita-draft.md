@@ -143,7 +143,9 @@ presence バリデーションは識別子ベースの判定なので、S3 上�
 
 ## 最新 main での修正: `present?` と `exists?` の分離
 
-2026 年 8 月、CarrierWave の master ブランチに issue #2776 の修正コミット [f635d88](https://github.com/carrierwaveuploader/carrierwave/commit/f635d88b9debeda27b25148856ca5e0faa186d17) が入りました(執筆時点で 4.0.0.alpha)。
+2026 年 8 月、CarrierWave の master ブランチに issue #2776 の修正コミット [f635d88](https://github.com/carrierwaveuploader/carrierwave/commit/f635d88b9debeda27b25148856ca5e0faa186d17) が入りました。
+
+執筆時点の master は `lib/carrierwave/version.rb` で `VERSION = "4.0.0.alpha"` を宣言しており、CHANGELOG にも複数の BREAKING CHANGE が並んでいます。次期メジャーバージョンに入る可能性が高いため、この記事では master のことを **4.0.0.alpha** と呼びます(正式なリリースバージョンが確定しているわけではない点にご注意ください)。
 
 修正の考え方はコミットメッセージに明快に書かれています。3.1.0 は「ファイルが割り当てられているか」と「ファイルがストレージに実在するか」という**別の質問を混同して**、両方を高コストな後者に揃えてしまった。そこでこの 2 つを分離する:
 
