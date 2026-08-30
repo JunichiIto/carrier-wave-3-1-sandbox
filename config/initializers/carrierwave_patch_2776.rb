@@ -6,8 +6,6 @@
 # 修正込みのバージョン(4.0 予定)がリリースされたら、このファイルごと削除して
 # bundle update carrierwave すること。
 
-require "carrierwave/storage/fog"
-
 unless CarrierWave::VERSION == "3.1.3"
   raise "carrierwave が 3.1.3 以外(#{CarrierWave::VERSION})になっています。" \
         "このモンキーパッチがまだ必要か確認し、不要なら " \
