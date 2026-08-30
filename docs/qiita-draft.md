@@ -35,7 +35,10 @@ CarrierWave を 3.0 系から 3.1 系にアップグレードすると、`user.a
 
 presence バリデーションは識別子カラム(DB)ベースの判定なので、**S3 上のオブジェクトが消えていても valid** です。これは後述する 4.0.0.alpha と同じセマンティクスで、3 バージョンの中では「ストレージを見る」3.1 系だけが特殊だった、ということになります。
 
-**注意点**: 「3.1 で問題が出たから 3.0 に留まる(戻す)」という回避には賞味期限があります。3.0.7 を Rails 8.1 で動かすと `String#mb_chars is deprecated and will be removed in Rails 8.2` の警告が大量に出ます(3.0 系の `SanitizedFile` が使用しているため)。Rails 8.2 以降では動かなくなる見込みです。
+**注意点**: 「3.1 で問題が出たから 3.0 に留まる(戻す)」という回避は取れません。理由は 2 つあります。
+
+- **セキュリティ**: 3.0 系には既知の脆弱性 [CVE-2026-44587](https://www.cve.org/CVERecord?id=CVE-2026-44587)(`denylisted_content_type` のバイパス、3.1.3 で修正)があり、bundler-audit にも検出されます
+- **Rails との互換性**: 3.0.7 を Rails 8.1 で動かすと `String#mb_chars is deprecated and will be removed in Rails 8.2` の警告が大量に出ます(3.0 系の `SanitizedFile` が使用しているため)。Rails 8.2 以降では動かなくなる見込みです
 
 ### 3.1 系: 「ファイルがあるか?」系がすべて S3 を叩く
 
@@ -94,6 +97,94 @@ S3 アクセスは消えますが、**`present?` の意味が変わる** BREAKIN
 - `present?` は「ファイルが割り当てられているか」であり、**ストレージ上の実在確認ではなくなります**。実在確認が必要な箇所は新設の `exists?` に置き換える必要があります
 - `validates :image, presence: true` は識別子カラムだけで判定するため、**S3 上のオブジェクトが消えていても valid になります**(3.1 系では invalid でした)。「ストレージ欠損の検出」をバリデーションに期待していたコードは動かなくなります
 - version(サムネイルなど)の `present?` も「親が present なら present」を返すようになるため、「条件付き version が実際に生成されたか」の判定は `exists?` で明示的に行う必要があります
+
+## 現時点ではどうすればいいか(4.0 リリースまで)
+
+ここまでをまとめると「3.0 は使い続けられない(CVE + Rails 8.2 非互換)、でも修正版の 4.0 はまだリリースされていない」という状況です。現時点の現実的な方針は次のとおりです。
+
+**大前提として 3.1.3 を使います**(CVE-2026-44587 の修正版)。そのうえで、S3 アクセス問題が自分のアプリで実害になっているか(APM のレイテンシ、S3 のリクエスト数・課金)をまず測ります。一覧ページで `present?` を呼んでいない、`save` 頻度が低い、といったアプリなら 3.1.3 のまま 4.0 を待つだけで十分です。
+
+実害がある場合の選択肢は 3 つあります。
+
+**選択肢 1: 存在チェックを識別子カラムベースに書き換える**
+
+`post.image.present?` を `post[:image].present?` や `post.image_identifier.present?` に置き換えれば、その箇所の S3 アクセスは消えます。gem の内部に触らないので最も安全ですが、呼び出し側の書き換えが必要で、CarrierWave が mount 時に自動追加するバリデータ由来の `valid?` / `save` 時の HEAD は残ります。
+
+**選択肢 2: 修正コミットをモンキーパッチとして移植する(検証済み)**
+
+修正コミット f635d88 はパッチ対象が 2 クラス 4 メソッドと小さく自己完結しているため、initializer 1 ファイルで 3.1.3 に移植できます。[verify-monkey-patch-2776 ブランチ](https://github.com/JunichiIto/carrier-wave-3-1-sandbox/tree/verify-monkey-patch-2776)で、**3.1.3 + このパッチが master 取り込み時とまったく同じ挙動になる**ことをテストで確認済みです。
+
+```ruby
+# config/initializers/carrierwave_patch_2776.rb
+require "carrierwave/storage/fog"
+
+unless CarrierWave::VERSION == "3.1.3"
+  raise "carrierwave が 3.1.3 以外(#{CarrierWave::VERSION})になっています。" \
+        "このモンキーパッチがまだ必要か確認し、不要なら " \
+        "config/initializers/carrierwave_patch_2776.rb を削除してください。"
+end
+
+module CarrierWavePatch2776
+  module UploaderProxyPatch
+    # blank? / present? は「ファイルが割り当てられているか」だけを返し、
+    # ストレージには問い合わせない
+    def blank?
+      return true unless file
+      return file.empty? if cached?
+
+      false
+    end
+
+    # ストレージ上の実在確認(リモートストレージでは HEAD リクエストが発生する)
+    def exists?
+      !!file&.exists?
+    end
+  end
+
+  module FogFilePatch
+    def read
+      file_body = file&.body
+
+      return if file_body.nil?
+      return file_body unless file_body.is_a?(::File)
+      return read_source_file if ::File.exist?(file_body.path)
+
+      remove_instance_variable(:@file)
+      file.body
+    end
+
+    def size
+      file&.content_length || 0
+    end
+
+    private
+
+    # 404(不在)もメモ化し、アクセスのたびに HEAD が再発行されるのを防ぐ
+    def file
+      return @file if defined?(@file)
+
+      @file = directory.files.head(path)
+    end
+  end
+end
+
+CarrierWave::Uploader::Base.prepend CarrierWavePatch2776::UploaderProxyPatch
+CarrierWave::Storage::Fog::File.prepend CarrierWavePatch2776::FogFilePatch
+```
+
+ポイント:
+
+- `Module#prepend` 方式なのでロード順に対して頑健です(クラスの再オープンだと、パッチより後に gem 本体が読み込まれた場合に上書きされるリスクがあります)
+- **バージョンガードは必須**です。3.1.4 や 4.0 に上げたときにパッチが黙って残留・競合する事故を防ぎます
+- 4.0 リリース時は initializer を削除して `bundle update carrierwave` するだけで移行できます
+- `present?` のセマンティクス変化(前章の注意点)を今すぐ引き受けることになる点は理解しておく必要があります
+- `read` 内の `remove_instance_variable` も本家に合わせて移植していますが、fog-aws では `body` が String で返るためこの分岐には到達しないことを実測で確認しています(body が `::File` を返しうる他の fog プロバイダ向けの防御的な移植)
+
+**選択肢 3: master を SHA 固定で使う**
+
+`gem "carrierwave", github: "carrierwaveuploader/carrierwave", ref: "f635d88..."` のように SHA 固定すれば修正は今すぐ手に入りますが、master には URL デコードの変更など**他の BREAKING CHANGE も含まれ**、リリース前に挙動が変わる可能性もあります。テストが厚く、差分を追える体制のあるチーム向けです。
+
+どの選択肢も `present?` まわりの挙動は「識別子ベースの判定」に変わるため、4.0 リリース後の移行はスムーズです。個人的なおすすめは、影響箇所が少ないなら選択肢 1、`present?` の呼び出し箇所が多くて書き換えコストが高いなら選択肢 2 です。
 
 ## 根拠: サンプルアプリで実測する
 
@@ -160,6 +251,7 @@ MinIO 側の設定は Gemfile 差し替えなしで S3 互換の挙動を再現�
 | [main](https://github.com/JunichiIto/carrier-wave-3-1-sandbox/tree/main) | 3.1.3 | 3.1 系の挙動を記録したテスト(前半の表の根拠) |
 | [verify-carrierwave-3-0-downgrade](https://github.com/JunichiIto/carrier-wave-3-1-sandbox/tree/verify-carrierwave-3-0-downgrade) | 3.0.7 | 3.0 系にダウングレードして挙動差を検証 |
 | [verify-carrierwave-master-fix](https://github.com/JunichiIto/carrier-wave-3-1-sandbox/tree/verify-carrierwave-master-fix) | master(f635d88) | 修正コミット取り込み後の挙動を検証 |
+| [verify-monkey-patch-2776](https://github.com/JunichiIto/carrier-wave-3-1-sandbox/tree/verify-monkey-patch-2776) | 3.1.3 + モンキーパッチ | 修正コミットをモンキーパッチとして移植し、master と同じ挙動になることを検証 |
 
 検証の手順はどちらの差し替えブランチも同じで、「main のテスト(3.1.3 の挙動を記録)を差し替え後にそのまま実行 → 失敗を観察 → 新しい挙動に期待値を更新」という流れです。
 
@@ -217,8 +309,9 @@ end
 ## まとめ
 
 - CarrierWave 3.1 系では「ファイルがあるか?」系のメソッドとバリデーション(自動追加分を含む)が S3 を叩く。3.0 系からのアップグレード時はパフォーマンスとコストに注意
-- 3.0 系へのダウングレードで S3 アクセスは消えるが、`String#mb_chars` が Rails 8.2 で削除されるため長期的な回避策にはならない
+- 3.0 系へのダウングレードは CVE-2026-44587 と Rails 8.2 非互換(`String#mb_chars` 削除)のため選択肢にならない
 - master(4.0.0.alpha)では `present?`(割り当て)と `exists?`(実在)が分離されて解決。ただし `present?` と presence バリデーションのセマンティクスが変わるので、実在確認に依存していたコードは `exists?` への置き換えが必要
+- 4.0 リリースまでの現実的な対処は「3.1.3 + 識別子ベースの書き換え」または「3.1.3 + 修正コミットのモンキーパッチ」。どちらも 4.0 のセマンティクスの先取りになるため、リリース後の移行もスムーズ
 
 検証に使ったサンプルアプリはこちらです。`docker compose up -d` と `bin/rails verify` だけで全部再現できるので、ぜひ手元で試してみてください。
 
@@ -230,3 +323,4 @@ https://github.com/JunichiIto/carrier-wave-3-1-sandbox
 - [修正コミット f635d88: Stop asking the storage whether the file is there in #blank?](https://github.com/carrierwaveuploader/carrierwave/commit/f635d88b9debeda27b25148856ca5e0faa186d17)
 - [issue #1926: fog と file ストレージで present? の意味を揃えた経緯](https://github.com/carrierwaveuploader/carrierwave/issues/1926)
 - [#2698](https://github.com/carrierwaveuploader/carrierwave/pull/2698) / [#2793](https://github.com/carrierwaveuploader/carrierwave/pull/2793): 404 が再発行される問題
+- [CVE-2026-44587](https://www.cve.org/CVERecord?id=CVE-2026-44587): 3.0 系に残る denylisted_content_type バイパス脆弱性(3.1.3 で修正)
