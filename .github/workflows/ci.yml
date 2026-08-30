@@ -3,7 +3,7 @@ name: CI
 on:
   pull_request:
   push:
-    branches: [ main ]
+    branches: [ main, verify-carrierwave-3-0-downgrade ]
 
 jobs:
   scan_ruby:
