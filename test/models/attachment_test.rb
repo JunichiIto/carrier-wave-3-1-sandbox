@@ -64,6 +64,11 @@ class AttachmentTest < ActiveSupport::TestCase
   end
 
   test "S3 上の preview だけが消えている場合、present? は true だが exists? は false を返す" do
+    # 「条件は true なのに version の実体がない」状態は、version を後から
+    # アップローダーに追加した(recreate_versions! 未実行)、version の条件や
+    # 名前を後から変更した、store! や recreate_versions! が部分失敗した、
+    # などの通常の運用で自然に発生する。ここでは S3 上のオブジェクトを
+    # 直接削除してその状態を再現する
     attachment = Attachment.create!(file: File.open(file_fixture("sample.png")))
     attachment.file.preview.file.delete # DB はそのまま、S3 上の preview オブジェクトだけを削除する
     attachment = Attachment.find(attachment.id)
