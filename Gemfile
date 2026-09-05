@@ -30,7 +30,7 @@ gem "kamal", require: false
 gem "thruster", require: false
 
 # Use Active Storage variants [https://guides.rubyonrails.org/active_storage_overview.html#transforming-images]
-gem "image_processing", "~> 1.2"
+gem "image_processing", "~> 2.1"
 
 # CarrierWave によるファイルアップロード(fog 経由で S3 互換ストレージ MinIO に保存)
 gem "carrierwave", "~> 3.1"
