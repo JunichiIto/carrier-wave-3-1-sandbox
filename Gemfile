@@ -34,7 +34,7 @@ gem "image_processing", "~> 1.2"
 
 # CarrierWave によるファイルアップロード(fog 経由で S3 互換ストレージ MinIO に保存)
 gem "carrierwave", "~> 3.1"
-gem "fog-aws", "~> 3.30"
+gem "fog-aws", "~> 3.33"
 
 # Use Rack CORS for handling Cross-Origin Resource Sharing (CORS), making cross-origin Ajax possible
 # gem "rack-cors"
